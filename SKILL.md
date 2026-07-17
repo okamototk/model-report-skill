@@ -1,6 +1,6 @@
 ---
 name: collect-benchmark
-description: Collect AI model benchmark data from Artificial Analysis and LayerLens Stratix. Uses web scraping for Artificial Analysis and the Stratix REST API (with optional API key). Model name is the only required input. Use when the user asks for benchmark data, model scores, model comparison, or evaluation results for a specific model.
+description: Collect AI model benchmark data from Artificial Analysis and LayerLens Stratix. Prefers the official Artificial Analysis Data API (x-api-key) for Intelligence/Coding/Math indices and pricing, falls back to web scraping; uses the Stratix REST API for per-benchmark scores. Model name is the only required input. Use when the user asks for benchmark data, model scores, model comparison, or evaluation results for a specific model.
 ---
 
 # Collect Model Benchmark Data
@@ -10,6 +10,7 @@ Collect benchmark data for a given AI model from two independent evaluation plat
 ## Parameters
 
 - **Model name** (required): The name of the AI model to look up (e.g., `GPT-4o`, `Claude Sonnet 4`, `Gemini 2.5 Flash`, `DeepSeek V4 Pro`).
+- **Artificial Analysis API Key** (optional but recommended): If available, pass via `x-api-key` header to the AA Data API for reliable Intelligence/Coding/Math indices and pricing without scraping.
 - **LayerLens API Key** (optional): If available, pass via `x-api-key` header to the Stratix API for full model catalog access (233 models vs 168 public).
 
 ## Step 1 — Search Artificial Analysis
@@ -18,29 +19,89 @@ Artificial Analysis provides Intelligence Index scores, speed (tokens/s), pricin
 
 ### Find the model
 
-Use either approach:
+Use one of the following approaches, **preferring the official API (A)** when a key is available:
 
-**A) Leaderboard** — Fetch `https://artificialanalysis.ai/leaderboards/models`. Search for the model row to extract Intelligence Index, blended price, speed, latency, context window, and the model slug.
+**A) Official AA Data API (recommended)** — Artificial Analysis offers a free Data API that returns the **Coding Index and other indices as structured JSON** (no JS rendering / scraping needed). This is the most reliable and cleanest way to get `artificial_analysis_coding_index`. (Note: the Coding Index — and the Agentic Index — are ALSO present in the static model-page HTML payload, see approach C; the API is simply the tidiest source and the only one that also gives the Math Index cleanly.)
 
-**B) Model detail page** — Fetch `https://artificialanalysis.ai/models/{slug}` where `{slug}` is derived from the model name by removing parenthetical variants, lowercasing, and replacing spaces/special chars with hyphens (e.g., `GPT-4o` → `gpt-4o`).
+```
+curl -X GET https://artificialanalysis.ai/api/v2/data/llms/models \
+     -H "x-api-key: {AA_API_KEY}"
+```
 
-For B, use Playwright (headless Chromium) to handle the React-rendered page. Wait for `networkidle` then extract from rendered text.
+- Endpoint: `GET https://artificialanalysis.ai/api/v2/data/llms/models`
+- Auth: `x-api-key` header. Get a free key by creating an account at `https://artificialanalysis.ai/login` and generating a key. Without a key the endpoint returns `401 {"error":"API key is required"}`.
+- Rate limit: 1,000 requests/day. The endpoint returns **all models** in one call — fetch once and cache/filter locally by `id` / `slug` / `name` (prefer the stable `id`). Do not put the key in client-side code.
+- Attribution to `https://artificialanalysis.ai/` is required when using this data.
+- Response shape (per model in `data[]`):
+  ```json
+  {
+    "id": "...", "name": "o3-mini", "slug": "o3-mini",
+    "model_creator": { "id": "...", "name": "OpenAI", "slug": "openai" },
+    "evaluations": {
+      "artificial_analysis_intelligence_index": 62.9,
+      "artificial_analysis_coding_index": 55.8,
+      "artificial_analysis_math_index": 87.2,
+      "mmlu_pro": 0.791, "gpqa": 0.748, "hle": 0.087,
+      "livecodebench": 0.717, "scicode": 0.399, "math_500": 0.973, "aime": 0.77
+    },
+    "pricing": { "price_1m_blended_3_to_1": 1.925, "price_1m_input_tokens": 1.1, "price_1m_output_tokens": 4.4 },
+    "median_output_tokens_per_second": 153.831,
+    "median_time_to_first_token_seconds": 14.939
+  }
+  ```
+- **AA Coding Index** = `evaluations.artificial_analysis_coding_index`. **AA Intelligence Index** = `evaluations.artificial_analysis_intelligence_index`. **Math Index** = `evaluations.artificial_analysis_math_index`.
+- **AA Agentic Index — not in the free API, but available in the static model-page HTML.** The free Data API's `evaluations` object exposes intelligence / coding / math indices and per-benchmark scores, but does **not** include an `artificial_analysis_agentic_index` field. However, the **Agentic Index (and Coding/Intelligence Index) IS in the static HTML** of any model page inside the Next.js `self.__next_f` payload (`"agenticIndex":<num>`), so a plain `curl`/WebFetch is sufficient — see approach C. Do not fabricate the value.
+- Note: the API's blended price is `price_1m_blended_3_to_1` (3:1 input:output). For the cache-aware 7:2:1 blended price used elsewhere in this skill, use the model-page value `price1mBlended7To2To1` or compute it (see Pricing notes).
+
+**B) Leaderboard** — Fetch `https://artificialanalysis.ai/leaderboards/models`. Search for the model row to extract Intelligence Index, blended price, speed, latency, context window, and the model slug.
+
+**C) Model detail page (static HTML — no JS/Playwright needed)** — Fetch `https://artificialanalysis.ai/models/{slug}` where `{slug}` is derived from the model name by removing parenthetical variants, lowercasing, and replacing spaces/special chars with hyphens (e.g., `GPT-4o` → `gpt-4o`).
+
+**Key finding: the Coding Index and Agentic Index ARE present in the static HTML** (contrary to earlier belief). The React page ships all model data inside Next.js streaming payloads (`self.__next_f`) as escaped JSON. A plain `curl` / `WebFetch` of the page contains, for **every** model (~570+ records in one page), objects like:
+
+```
+..."name":"GPT-5.6 Sol (max)",...,"intelligenceIndex":58.8898...,"codingIndex":77.3880...,"agenticIndex":54.0035...,"omniscience":21.7,...
+```
+
+So **Playwright is NOT required** for Intelligence / Coding / Agentic indices — a single static fetch of any one model page yields all models' indices. Playwright is only a last-resort fallback.
+
+Extraction recipe (from the raw HTML, no browser):
+
+1. Fetch the page HTML (`curl -s` or WebFetch). Note the page is large (~3 MB) and contains ~570 model records; WebFetch output may be truncated — prefer `curl` to a file, or delegate parsing to the explore agent via Grep on the saved WebFetch output file.
+2. Unescape `\"` → `"` in the HTML text.
+3. For each target, locate `"name":"{model full name}"` and, within the next ~1200 chars, read `"intelligenceIndex":<num>`, `"codingIndex":<num>`, `"agenticIndex":<num>` (values are already on the 0–100 index scale; `null` if not evaluated).
+4. Match the exact model variant name (e.g., `GPT-5.6 Sol (max)`, `GLM-5.2 (max)`, `Claude Fable 5 (Adaptive Reasoning, Max Effort, Opus 4.8 Fallback)`). There is also a `schema.org` JSON-LD `<script type="application/ld+json">` block, but it only lists the chart's top ~11 entries for one index — the `__next_f` payload is the complete source.
+
+Only if the static payload cannot be parsed, fall back to Playwright: use headless Chromium, click the `role=tab` for the index, and read the tab panel (ids ending `-content-agentic-index` etc.) or its embedded JSON-LD. TLS/lib caveats: pass `--ignore-certificate-errors` + `ignore_https_errors=True` behind an intercepting proxy; if `libasound.so.2` is missing and you lack sudo, `apt-get download libasound2t64`, `dpkg-deb -x`, and set `LD_LIBRARY_PATH`.
+
 
 ### Data to collect
 
-| Metric | How to find |
-|--------|-------------|
-| Intelligence Index | #N ranking + score in model summary section |
-| Output Speed | Tokens/s in model summary |
-| Input / Output / Cache Price | USD per 1M tokens in model summary |
-| Context Window | Tokens in technical specs |
-| Latency (TTFT) | Seconds in model summary / FAQ |
-| End-to-End Response | Seconds for 500 tokens in model summary |
-| Reasoning flag | Yes/No in technical specs |
-| Provider & Release Date | Top of page |
-| **Total Eval Cost** | From "In total, it cost $X to evaluate {model} on the Intelligence Index" in the Comparison Summary paragraph |
-| **Total Output Tokens (Index)** | From the Intelligence Index evals summary — total output tokens across all 9 evaluations in the benchmark (often listed alongside Total Eval Cost) |
-| Per-benchmark scores | Individual evaluation pages at `/evaluations/{eval-name}` (e.g., `/evaluations/gdpval-aa` for GDPval-AA v2 leaderboard) |
+Prefer the **API fields (approach A)** where available; fall back to page text (approach B/C) when no key is present.
+
+| Metric | API field (approach A) | Page text (approach B/C) |
+|--------|------------------------|--------------------------|
+| Intelligence Index | `evaluations.artificial_analysis_intelligence_index` | #N ranking + score in model summary section |
+| **Coding Index** | `evaluations.artificial_analysis_coding_index` | `"codingIndex":<num>` in static HTML `__next_f` payload (curl/WebFetch) |
+| **Math Index** | `evaluations.artificial_analysis_math_index` | Math Index tab / model-page payload |
+| **Agentic Index** | *(not in free API)* | `"agenticIndex":<num>` in static HTML `__next_f` payload (curl/WebFetch; no Playwright needed) |
+| **AA-Omniscience Index** (Knowledge primary) | *(not in free API)* | `"omniscience":<num>` in static HTML `__next_f` payload (curl/WebFetch; no Playwright needed) |
+| **GPQA Diamond** (Reasoning primary) | `evaluations.gpqa` (0–1 scale ×100 for %) | GPQA row in evals table |
+| **τ-Bench** (Agent supplement) | `evaluations.tau2` / `evaluations.tau_banking` (0–1 ×100) | τ-Bench evaluation page |
+| **Terminal-Bench 2.1** (Agent supplement) | `evaluations.terminalbench_v2_1` / `terminalbench_hard` (0–1 ×100) | Terminal-Bench evaluation page |
+| Output Speed | `median_output_tokens_per_second` | Tokens/s in model summary |
+| Latency (TTFT) | `median_time_to_first_token_seconds` | Seconds in model summary / FAQ |
+| Input / Output Price | `pricing.price_1m_input_tokens` / `price_1m_output_tokens` | USD per 1M tokens in model summary |
+| Blended Price | `pricing.price_1m_blended_3_to_1` (3:1) | `price1mBlended7To2To1` (7:2:1, cache-aware) on page |
+| Per-benchmark scores | `evaluations.{mmlu_pro,gpqa,hle,livecodebench,scicode,math_500,aime}` (0–1 scale ×100 for %) | Individual `/evaluations/{eval-name}` pages |
+| Context Window | *(not in this endpoint)* | Tokens in technical specs |
+| Cache Price | *(not in this endpoint)* | USD per 1M tokens in model summary |
+| Reasoning flag | *(not in this endpoint)* | Yes/No in technical specs |
+| **Total params** | *(not in this endpoint)* | `parameters` in technical specs (total, billions) |
+| **Active params** | *(not in this endpoint)* | `inferenceParametersActiveBillions` (per-token active for MoE; equals total for dense) |
+| Provider & Release Date | `model_creator` / *(release on page)* | Top of page |
+| **Total Eval Cost** | *(not in free API)* | "In total, it cost $X to evaluate {model} on the Intelligence Index" in the Comparison Summary paragraph |
+| **Total Output Tokens (Index)** | *(not in free API)* | From the Intelligence Index evals summary — total output tokens across all evaluations |
 
 ## Step 2 — Search LayerLens Stratix
 
@@ -84,6 +145,7 @@ The API key can be obtained from the Stratix Premium account settings.
 |--------|-----------|
 | Provider | `company` |
 | Architecture | `architecture_type` |
+| **Total params** | `parameters` (total parameters in billions; Stratix exposes **total only**, not active) |
 | Context Length | `context_length` |
 | Max Output Tokens | `max_tokens` |
 | Modality | `modality` (e.g., "text+image+file->text") |
@@ -94,6 +156,8 @@ The API key can be obtained from the Stratix Premium account settings.
 | Prompt count | `total_prompt_count` |
 | Average duration | `average_duration` (nanoseconds; divide by 1e9 for seconds) |
 | Sub-provider | `sub_provider` (e.g., "openai/flex") |
+
+> **Parameters — Total vs Active:** Always report parameters as **Total / Active** (e.g., `744B / 40B`). Stratix's `parameters` field is the **total** parameter count only. The **active** (per-token) parameter count for MoE models must come from **Artificial Analysis** (`inferenceParametersActiveBillions`, see Step 1). If only one platform has a value, fill the other side with `非公開` / `N/A`. For dense (non-MoE) models, total and active are the same — report as `{n}B / {n}B (dense)`.
 
 ## Step 2.5 — Collect Retention and No Training Policy
 
@@ -137,19 +201,29 @@ Present the combined report in two sections:
 
 | Metric | Value | Source |
 |--------|-------|--------|
-| Intelligence Index | {score} (#N / total) | Artificial Analysis |
+| Provider | {name} | Artificial Analysis |
+| Release | {YYYY-MM-DD} | Artificial Analysis |
+| License | {type} | Artificial Analysis |
+| Total / Active params | {total}B / {active}B | Artificial Analysis (active) / LayerLens (total) |
+| Context Window | {tokens} | Artificial Analysis / LayerLens |
+| Reasoning | Yes / No | Artificial Analysis |
+| AA Intelligence Index | {score} (#N / total) | Artificial Analysis |
+| AA Coding Index | {score} | Artificial Analysis |
+| AA Agentic Index | {score} | Artificial Analysis |
 | Output Speed | {tokens/s} | Artificial Analysis |
 | Latency (TTFT) | {seconds}s | Artificial Analysis |
 | Input Price | $X.XX / 1M tokens | Artificial Analysis |
 | Output Price | $X.XX / 1M tokens | Artificial Analysis |
-| Context Window | {tokens} | Artificial Analysis / LayerLens |
-| Reasoning | Yes / No | Artificial Analysis |
+| Cache Hit Price | $X.XX / 1M tokens | Artificial Analysis |
+| Blended Price (input:output:cache = 7:2:1) | $X.XX / 1M tokens | Artificial Analysis |
 | Total Eval Cost (AA Intelligence Index) | ${cost} | Artificial Analysis |
+| Time per Task | {seconds}s ({min}min) | Artificial Analysis |
 | Total Output Tokens (Index) | {tokens} | Artificial Analysis |
-| Retention (default) | {days} | Provider docs / gateway |
-| Retention (ZDR) | Available / Not available / Default | Provider docs / gateway |
+| OWM (Open Weights Model) | Yes / No | Artificial Analysis |
+| Retention (API default) | {days} | Provider docs / gateway |
+| Retention (API ZDR) | Available / Not available / Default | Provider docs / gateway |
 | Retention (other tiers) | {list of policies} | Provider docs / gateway |
-| No Training | Yes / No / Claimed | Provider docs / gateway |
+| No Training (API) | Yes / No / Claimed | Provider docs / gateway |
 
 ### Per-Benchmark Scores
 
@@ -173,15 +247,23 @@ When comparing multiple models, organize benchmarks into five capability categor
 
 | Category | Primary Benchmark | Supplements (2-3) | What It Measures |
 |----------|-------------------|-------------------|------------------|
-| **Reasoning** | HLE (Humanity's Last Exam) | AIME 2025/2026, MATH-500, Big Bench Hard | Frontier math, logic, multi-step reasoning |
-| **Coding** | SWE-bench Verified | SWE-bench Lite, SWE-bench Pro, Terminal-Bench 2.1 | Real-world software engineering, agentic coding |
-| **Knowledge** | MMLU Pro | AGIEval English, General Purpose QA | Graduate-level academic knowledge, fact recall |
-| **Agent** | τ-Bench (Tau-Bench) | Terminal-Bench 2.1, GDPval-AA v2 (Elo) | Tool use, multi-turn agentic tasks, real-world workflows |
+| **Reasoning** | GPQA Diamond | HLE (Humanity's Last Exam), AIME 2025/2026, MATH-500, Big Bench Hard | Frontier science/math, logic, multi-step reasoning |
+| **Coding** | AA Coding Index | SWE-bench Verified, SWE-bench Lite, SWE-bench Pro, Terminal-Bench 2.1 | Real-world software engineering, agentic coding |
+| **Knowledge** | AA-Omniscience Index | MMLU Pro, AGIEval English, General Purpose QA | Broad factual knowledge, low hallucination, academic recall |
+| **Agent** | AA Agentic Index | τ-Bench (Tau-Bench / tau2), Terminal-Bench 2.1, GDPval-AA v2 (Elo) | Tool use, multi-turn agentic tasks, real-world workflows |
 | **RAG** | BrowseComp | General Purpose QA, AGIEval English, MMLU Pro | Web browsing, information retrieval, evidence synthesis |
 
 ### Supplement Rule
 
 If any model lacks data for the primary benchmark in a category, add 2-3 supplementary benchmarks from that category's supplement list. Present the primary first, then supplements below.
+
+**Coding category — primary is AA Coding Index.** The primary benchmark for Coding is the **AA Coding Index** (`evaluations.artificial_analysis_coding_index` from the AA Data API — approach A; an AA composite score, higher is better). **Fetch it via the official AA Data API** (cleanest), or from the **static model-page HTML** (`"codingIndex":<num>` in the `__next_f` payload — approach C; a plain `curl`/WebFetch works, no Playwright needed). Display it as the first, bolded row and decide the Coding **Verdict** by it. Then list the SWE-bench variants (Verified → Lite → Pro) and Terminal-Bench 2.1 as supplements below, using their SX values (see Source Precedence). Only if neither the API nor the static payload is available, fall back to **SWE-bench Verified** as the primary and clearly note the substitution.
+
+**Reasoning category — primary is GPQA Diamond.** The primary benchmark for Reasoning is **GPQA Diamond** (`evaluations.gpqa` from the AA Data API — approach A; graduate-level science QA, 0–1 scale, multiply by 100 for %). Fetch it via the AA Data API. Display it as the first, bolded row and decide the Reasoning **Verdict** by it. List HLE, AIME 2025/2026, MATH-500, and Big Bench Hard as supplements below. When both AA (`gpqa`) and SX report a benchmark, follow the Source Precedence rule. If a model lacks GPQA, fall back to **HLE** as the primary and note the substitution.
+
+**Agent category — primary is AA Agentic Index.** The primary benchmark for Agent is the **AA Agentic Index** (an AA composite of GDPval-AA v2 + 𝜏³-Banking; higher is better). It is **not** in the free AA Data API, but **is available in the static model-page HTML** (`"agenticIndex":<num>` in the Next.js `__next_f` payload — a plain `curl`/WebFetch is enough; see approach C). Order of preference: (1) static HTML payload parse (no browser); (2) AA **commercial API** if available; (3) Playwright as a last resort. Mark its source and never fabricate it. Only if none of these work, **fall back to τ-Bench (Tau-Bench / `tau2`)** as the primary, and if that is also missing, **Terminal-Bench 2.1** (`terminalbench_v2_1`) — clearly noting the substitution. Decide the Agent **Verdict** by whichever primary was actually used.
+
+**Knowledge category — primary is AA-Omniscience Index.** The primary benchmark for Knowledge is the **AA-Omniscience Index** (AA's broad-knowledge / low-hallucination composite; higher is better). It is **not** in the free AA Data API, but **is available in the static model-page HTML** as `"omniscience":<num>` in the Next.js `__next_f` payload (a plain `curl`/WebFetch is enough; see approach C — same records that hold `codingIndex`/`agenticIndex`). Order of preference: (1) static HTML payload parse (no browser); (2) AA **commercial API** if available; (3) Playwright as a last resort. Mark its source and never fabricate it. Display it as the first, bolded row and decide the Knowledge **Verdict** by it. List MMLU Pro, AGIEval English, and General Purpose QA as supplements below (SX values). If the AA-Omniscience Index cannot be obtained, **fall back to MMLU Pro** as the primary and clearly note the substitution.
 
 ### Comparison Format
 
@@ -199,28 +281,204 @@ Present each category as a table:
 
 Bold the winner in each row. Add a **Verdict** line after each category. End with an overall winner table.
 
-### Overall Comparison Table
-
-When comparing multiple models end-to-end, include this summary table covering specs, pricing, retention, and training policy:
+Example for the Coding category (primary = AA Coding Index, source AA; supplements from SX):
 
 ```
-| Metric | Model A | Model B | Model C |
-|--------|---------|---------|---------|
+### Coding (Primary: AA Coding Index)
+
+| Benchmark | Model A | Model B | Model C | Source |
+|-----------|---------|---------|---------|--------|
+| **AA Coding Index** (primary) | {score} | {score} | {score} | AA |
+| SWE-bench Verified | {score}% | {score}% | {score}% | SX |
+| SWE-bench Lite | {score}% | {score}% | {score}% | SX |
+| Terminal-Bench 2.1 | {score}% | {score}% | {score}% | SX |
+```
+
+Example for the Reasoning category (primary = GPQA Diamond, source AA; supplements from AA/SX):
+
+```
+### Reasoning (Primary: GPQA Diamond)
+
+| Benchmark | Model A | Model B | Model C | Source |
+|-----------|---------|---------|---------|--------|
+| **GPQA Diamond** (primary) | {score}% | {score}% | {score}% | AA |
+| HLE | {score}% | {score}% | {score}% | SX |
+| AIME 2025 | {score}% | {score}% | {score}% | SX |
+| MATH-500 | {score}% | {score}% | {score}% | SX |
+```
+
+Example for the Agent category (primary = AA Agentic Index if obtainable, else τ-Bench):
+
+```
+### Agent (Primary: AA Agentic Index)
+
+| Benchmark | Model A | Model B | Model C | Source |
+|-----------|---------|---------|---------|--------|
+| **AA Agentic Index** (primary) | {score} | {score} | {score} | AA (static HTML) |
+| τ-Bench (tau2) | {score}% | {score}% | {score}% | AA/SX |
+| Terminal-Bench 2.1 | {score}% | {score}% | {score}% | SX |
+| SWE-bench Pro | {score}% | {score}% | {score}% | SX |
+```
+
+If the AA Agentic Index cannot be obtained, relabel the header as `### Agent (Primary: τ-Bench — AA Agentic Index unavailable)` and bold the winner by τ-Bench.
+
+Example for the Knowledge category (primary = AA-Omniscience Index, source AA static HTML; supplements from SX):
+
+```
+### Knowledge (Primary: AA-Omniscience Index)
+
+| Benchmark | Model A | Model B | Model C | Source |
+|-----------|---------|---------|---------|--------|
+| **AA-Omniscience Index** (primary) | {score} | {score} | {score} | AA (static HTML) |
+| MMLU Pro | {score}% | {score}% | {score}% | SX |
+| AGIEval English | {score}% | {score}% | {score}% | SX |
+| General Purpose QA | {score}% | {score}% | {score}% | SX |
+```
+
+If the AA-Omniscience Index cannot be obtained, relabel the header as `### Knowledge (Primary: MMLU Pro — AA-Omniscience Index unavailable)` and bold the winner by MMLU Pro.
+
+### Source Precedence (AA vs SX for the same benchmark)
+
+Some benchmarks are reported by **both** Artificial Analysis (AA) and LayerLens Stratix (SX) — commonly **HLE (Humanity's Last Exam)** and **Terminal-Bench**. Because each platform uses a different evaluation harness, their scores often differ significantly and are **not directly comparable**.
+
+Rule: **when a benchmark value exists on both AA and SX, prefer the SX value** (SX exposes the explicit harness — e.g. `Terminal-Bench 2.1 (Terminus-2)`, `mini-swe-agent` for SWE-bench — and is more reproducible). Use the SX value as the primary/displayed number and mark the row source as `SX`.
+
+- Keep the AA value as a **parenthetical reference** next to the SX value or in a footnote (e.g. `SX（AA参考: 80.90/80.52/77.90%）`), never as the ranked/bolded number.
+- If a model has the benchmark only on AA (not on SX), keep the AA value but add a footnote that the harness differs and it is **not directly comparable** to the SX-based scores in the same row.
+- Winners (bold) and Verdicts must be decided using the SX values for these dual-source benchmarks.
+- Benchmarks available on only one platform (e.g. SWE-bench variants → SX only; GDPval-AA / AA-Omniscience / Coding & Agentic Index → AA only) are used as-is with their single source.
+
+### Basic Information Tables (Overall Comparison)
+
+When comparing multiple models end-to-end, present a **Basic Information** section organized into the following grouped tables. Split into separate tables (not one large table) so each dimension is easy to scan. Bold the best value in each row where a clear "better" direction exists.
+
+**Model Attributes**
+
+```
+| Item | Model A | Model B | Model C |
+|------|:---:|:---:|:---:|
 | Provider | {name} | {name} | {name} |
-| License | {type} | {type} | {type} |
-| Context | {tokens} | {tokens} | {tokens} |
-| Reasoning | Yes / No | Yes / No | Yes / No |
-| Speed | {tok/s} | {tok/s} | {tok/s} |
-| Input Price | $X/M | $X/M | $X/M |
-| Output Price | $X/M | $X/M | $X/M |
-| Total Output Tokens | {tokens} | {tokens} | {tokens} |
-| Retention (default) | {days} | {days} | {days} |
-| Retention (ZDR) | Available / Default / — | Available / Default / — | Available / Default / — |
-| Retention (other) | {list} | {list} | {list} |
-| No Training | Yes / No / Claimed | Yes / No / Claimed | Yes / No / Claimed |
+| Release | {YYYY-MM-DD} | ... | ... |
+| License | {type} | ... | ... |
+| Total / Active params | {total}B / {active}B | ... | ... |
+| Context | {tokens} | ... | ... |
+| Reasoning | Yes / No | ... | ... |
 ```
 
-Add a **Retention & Privacy Verdict** row to the overall winner table highlighting which model has the most favorable privacy posture.
+**Pricing**
+
+```
+| Item | Model A | Model B | Model C |
+|------|:---:|:---:|:---:|
+| Input price (/1M) | $X.XX | ... | ... |
+| Output price (/1M) | $X.XX | ... | ... |
+| Cache hit price (/1M) | $X.XX | ... | ... |
+| Blended price (input:output:cache = 7:2:1) | $X.XX | ... | ... |
+```
+
+The **Cache hit price** row is mandatory in the Pricing table. The **Blended price** is a cache-aware weighted average of the three per-1M prices at the ratio **input : output : cache = 7 : 2 : 1**; always spell out the ratio in the row label (do not abbreviate to just "Blended price"). Compute as `0.7 × input + 0.2 × output + 0.1 × cache_hit` when the AA field is unavailable.
+
+**Benchmarks (Artificial Analysis)**
+
+```
+| Item | Model A | Model B | Model C |
+|------|:---:|:---:|:---:|
+| AA Intelligence Index | {score} | ... | ... |
+| AA Coding Index | {score} | ... | ... |
+| AA Agentic Index | {score} | ... | ... |
+```
+
+**Cost & Speed**
+
+```
+| Item | Model A | Model B | Model C |
+|------|:---:|:---:|:---:|
+| Total Eval Cost | ${cost} | ... | ... |
+| Time per Task | {s}s ({min}min) | ... | ... |
+```
+
+**Sovereignty**
+
+```
+| Item | Model A | Model B | Model C |
+|------|:---:|:---:|:---:|
+| OWM (Open Weights Model) | Yes / No | ... | ... |
+| Retention (API default) | {days} | ... | ... |
+| Retention (API ZDR) | Available / Default / On request / Enterprise / — | ... | ... |
+| No Training (API) | Yes / No / Claimed | ... | ... |
+```
+
+Field notes for the Basic Information tables:
+
+- **Total / Active params**: **always report as `{total}B / {active}B`** (two values separated by ` / `). Total comes from AA `parameters` or Stratix `parameters`; active comes from AA `inferenceParametersActiveBillions`. For MoE models the two differ (e.g., `744B / 40B`); for dense models they are equal (`{n}B / {n}B (dense)`). If a value is undisclosed, fill that side with `非公開` / `N/A` (e.g., `非公開 / 非公開` for closed proprietary models, or `2500B / 非公開` when only total is known). Never collapse to a single number.
+- **Cache hit price**: AA `cacheHitPrice` (mandatory row in the Pricing table). **Blended price**: AA `price1mBlended7To2To1` — a **cache-aware** weighted average at the ratio **input : output : cache = 7 : 2 : 1**. Always show the ratio in the label. If the AA field is missing, compute it as `0.7 × input_price + 0.2 × output_price + 0.1 × cache_hit_price`.
+- **AA Intelligence / Coding / Agentic Index**: AA `intelligenceIndex` / `codingIndex` / `agenticIndex`.
+- **Total Eval Cost**: prefer AA official `intelligenceIndexCost.total`. If the model is **not present** in the AA cost dataset, compute an approximation as `input_tokens × input_price + output_tokens × output_price` (cache not considered) from `canonicalIntelligenceIndexTokenCount`, and clearly mark it as an approximation (e.g., `≈$X (approx)`).
+- **Time per Task**: AA `intelligenceIndexTimePerTask` (seconds; also show minutes). This is a computed value (output tokens per task ÷ output speed, weighted), excluding TTFT/overhead.
+- **OWM**: Yes if `isOpenWeights` is true. Note that open-weight models (self-hostable) can eliminate retention/training concerns entirely.
+- **Retention / No Training**: from provider docs / gateway listings (see Step 2.5). Optionally add a **Retention (other tiers)** row when relevant.
+- Add a footnote for any provider-specific pricing quirks (e.g., per-search surcharge) and cite sources under each section.
+
+Optionally follow with a **Speed & Latency supplement** table (`Output Speed tok/s`, `TTFT`) using AA `medianOutputSpeed` and `medianTimeToFirstAnswerToken` / TTFT.
+
+Add a **Retention & Privacy Verdict** row to the overall winner table highlighting which model has the most favorable privacy posture (open-weight + 0-day retention + no training is the strongest posture).
+
+### Report Structure (Main Body vs Appendix)
+
+Organize the comparison report into a **main body** and an **Appendix**, so the most decision-relevant content is up front and supporting detail is moved to the back.
+
+**Main body** (in this order):
+
+1. Basic Information tables (the grouped tables above: Model Attributes, Pricing, Benchmarks, Cost & Speed, Sovereignty)
+2. Capability-by-category comparison (Reasoning / Coding / Knowledge / Agent / RAG)
+3. Overall winner table (with the Retention & Privacy Verdict row)
+
+**Appendix** (introduce with a top-level `# Appendix` heading, larger than the section headings):
+
+- **Cost efficiency detail** — the full cost-efficiency table (Total Eval Cost, Cost per Task, total tokens, Time per Task, E2E response time) and the **per-evaluation cost breakdown** (`weightedCostPerTask`). This detail belongs in the Appendix, *after* the `# Appendix` heading, not in the main body.
+- **Retention & Privacy detail** — the full per-provider retention/training policy table and verdict.
+- **Data sources & notes** — sources, harness-difference caveats, approximation notes, missing-data footnotes.
+
+Rules:
+
+- The `# Appendix` heading must be a top-level heading (`#`), visually larger than the `##` section headings used elsewhere.
+- Keep the Basic Information tables' concise Cost & Speed summary (Total Eval Cost, Time per Task) in the main body; move the **detailed** cost-efficiency breakdown and per-evaluation cost table into the Appendix.
+- You may label Appendix subsections with letters (e.g., `## A. Cost Efficiency`) or keep the original numbering — but they must appear under the `# Appendix` heading.
+
+### HTML Slide Deck Layout (when rendering the report as a slide deck)
+
+When the comparison report is turned into an HTML slide deck (e.g., via the slidekit-create skill), use the following **slide allocation and chart mapping**. Each capability category gets its own slide with a chart — do not combine two categories on one slide.
+
+| Slide | Content | Chart type |
+|-------|---------|------------|
+| Cover | Title + model names | — |
+| Agenda | Section list | — |
+| Executive Summary | Verdict + per-model cards | — |
+| **Basic Spec & Pricing** | Attributes + pricing table (incl. cache row, blended ratio label) | Table |
+| **Sovereignty & Privacy** (immediately after Basic Spec & Pricing) | OWM, retention, ZDR, self-host, no-training | Table + notes |
+| **Intelligence & Cost** | AA Intelligence Index vs **Total Eval Cost** | Chart (2 bars, or scatter Index-vs-Cost) |
+| **Reasoning** (own slide) | Left: GPQA Diamond bar (primary). Right: bubble chart | Bar + Bubble |
+| **Knowledge** (own slide) | Left: AA-Omniscience Index bar (primary). Right: bubble chart | Bar + Bubble |
+| **Coding** (own slide) | Left: AA Coding Index bar (primary). Right: bubble chart | Bar + Bubble |
+| **Agent** (own slide) | Left: AA Agentic Index bar (primary; τ-Bench fallback). Right: bubble chart | Bar + Bubble |
+| Overall Verdict | Winner-by-dimension + use-case recommendations | Table |
+| Closing | Key stats | — |
+
+Chart & ordering rules:
+
+- **Intelligence & Cost slide:** replace any "speed"-based intelligence slide with **AA Intelligence Index vs Total Eval Cost**. Use **Total Eval Cost** (AA `intelligenceIndexCost.total`; approximate + mark if absent), **not** cost-per-task or speed, as the cost axis/series. Speed & latency (tok/s, TTFT) move to a supplementary strip or the Appendix, never as the primary intelligence comparison.
+- **Reasoning and Knowledge are separate slides**, each shown as a chart (bar / grouped bar per benchmark). Do not put reasoning and knowledge tables on the same slide. Reasoning's primary series is **GPQA Diamond** (AA `evaluations.gpqa`); HLE / AIME / MATH-500 are supplements. Knowledge's primary series is the **AA-Omniscience Index** (AA `"omniscience"`, static HTML); MMLU Pro / AGIEval / General QA are supplements.
+- **Coding and Agent are separate slides**, each shown as a chart. Do not combine coding and agent on one slide. Coding's primary series is the **AA Coding Index**; SWE-bench variants are supplements. Agent's primary series is the **AA Agentic Index**; if it cannot be obtained (not in the free API), fall back to **τ-Bench** and note the substitution, with Terminal-Bench 2.1 as a supplement.
+- **Sovereignty & Privacy** must be placed **immediately after** the Basic Spec & Pricing slide (moved up from the cost/appendix area).
+- **Each capability slide (Reasoning / Knowledge / Coding / Agent) uses a two-pane layout:** the **left pane** is a horizontal bar chart of that category's **primary index** across all models; the **right pane** is a **bubble chart** (same on every capability slide). Supplementary benchmarks (HLE/AIME/MATH, MMLU Pro/AGIEval, SWE-bench variants, Terminal-Bench/τ-Bench) move out of a second bar chart into the verdict card / footnote to make room for the bubble.
+- **Capability bubble chart spec (identical axes on all four capability slides):**
+  - **X-axis** = **Time per Task** (seconds; AA `intelligenceIndexTimePerTask`, lower is better). Use the same value for all four slides since AA reports one Index-level time-per-task per model.
+  - **Y-axis** = that slide's **primary index score** (GPQA Diamond % / AA-Omniscience Index / AA Coding Index / AA Agentic Index).
+  - **Bubble size** = **Total Eval Cost** (AA `intelligenceIndexCost.total`, USD). Scale radius as `r = sqrt(cost)/K` (area ∝ cost; pick K, e.g. 6, so the largest bubble fits).
+  - One bubble per model, one distinct color per model (consistent across all slides), a top legend, and a tooltip showing `{model}: {score}, {time}s, Eval ${cost}`.
+  - Chart.js `type:'bubble'`; label the axes ("Time per Task (s) · lower is better" / the index name). Read the bubble as "top-left + small = best" (high score, fast, cheap).
+  - If a model lacks Time per Task or Eval Cost, omit its bubble (keep it in the left bar) and note the omission.
+- Missing data (e.g., a model with no Stratix per-benchmark scores) is shown as `—` in the chart legend/labels with a footnote.
 
 ### Data Sources
 
@@ -246,6 +504,8 @@ Add a **Retention & Privacy Verdict** row to the overall winner table highlighti
 ## Step 5 — Create Bubble Chart (Speed vs SWE Capability)
 
 Generate a bubble chart comparing models by speed and SWE capability, with bubble size representing cost efficiency.
+
+> Note: this Step-5 bubble chart (X = **speed tok/s**, Y = **SWE-bench Verified %**, size = **Cost per Task**) is a **standalone matplotlib figure** for the report/appendix. It is **distinct** from the per-capability slide bubble charts described in the "HTML Slide Deck Layout" section (which use X = **Time per Task (s)**, Y = **the slide's primary index**, size = **Total Eval Cost**, rendered with Chart.js). Keep the two separate; do not merge their axis definitions.
 
 ### Data Sources
 
