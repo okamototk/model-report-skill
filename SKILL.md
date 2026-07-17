@@ -97,8 +97,7 @@ Prefer the **API fields (approach A)** where available; fall back to page text (
 | Context Window | *(not in this endpoint)* | Tokens in technical specs |
 | Cache Price | *(not in this endpoint)* | USD per 1M tokens in model summary |
 | Reasoning flag | *(not in this endpoint)* | Yes/No in technical specs |
-| **Total params** | *(not in this endpoint)* | `parameters` in technical specs (total, billions) |
-| **Active params** | *(not in this endpoint)* | `inferenceParametersActiveBillions` (per-token active for MoE; equals total for dense) |
+| **Total / Active params** | *(not in this endpoint)* | Total: `parameters`; Active: `inferenceParametersActiveBillions` (per-token active for MoE; equals total for dense). Report as `{total}B / {active}B` |
 | Provider & Release Date | `model_creator` / *(release on page)* | Top of page |
 | **Total Eval Cost** | *(not in free API)* | "In total, it cost $X to evaluate {model} on the Intelligence Index" in the Comparison Summary paragraph |
 | **Total Output Tokens (Index)** | *(not in free API)* | From the Intelligence Index evals summary — total output tokens across all evaluations |
@@ -145,7 +144,7 @@ The API key can be obtained from the Stratix Premium account settings.
 |--------|-----------|
 | Provider | `company` |
 | Architecture | `architecture_type` |
-| **Total params** | `parameters` (total parameters in billions; Stratix exposes **total only**, not active) |
+| **Total / Active params** | Total: `parameters` (billions; Stratix exposes **total only**). Active: not in Stratix — use AA `inferenceParametersActiveBillions` (see Step 1). Always report as `{total}B / {active}B`. |
 | Context Length | `context_length` |
 | Max Output Tokens | `max_tokens` |
 | Modality | `modality` (e.g., "text+image+file->text") |
@@ -159,31 +158,36 @@ The API key can be obtained from the Stratix Premium account settings.
 
 > **Parameters — Total vs Active:** Always report parameters as **Total / Active** (e.g., `744B / 40B`). Stratix's `parameters` field is the **total** parameter count only. The **active** (per-token) parameter count for MoE models must come from **Artificial Analysis** (`inferenceParametersActiveBillions`, see Step 1). If only one platform has a value, fill the other side with `非公開` / `N/A`. For dense (non-MoE) models, total and active are the same — report as `{n}B / {n}B (dense)`.
 
-## Step 2.5 — Collect Retention and No Training Policy
+## Step 2.5 — Collect API Hosting Region, Retention, and No Training Policy
 
-For each model, collect data retention policy and whether the provider trains on API data. These are not available on benchmark platforms — search provider documentation, API reference pages, or gateway listing sites (e.g., `requesty.ai/models/{provider}/{model}`, `vercel.com/ai-gateway/models/{model}`, `llmgateway.io/providers/{provider}`). Gateway sites often display "Data retention" and "Used for training" fields in their spec tables.
+For each model, collect the **official first-party API hosting region**, the data retention policy, and whether the provider trains on API data. These are not available on benchmark platforms — search provider documentation, privacy policy / terms of service pages, API reference pages, or gateway listing sites (e.g., `requesty.ai/models/{provider}/{model}`, `vercel.com/ai-gateway/models/{model}`, `llmgateway.io/providers/{provider}`). Gateway sites often display "Data retention" and "Used for training" fields in their spec tables; the **hosting region** usually comes only from the provider's official privacy policy / data-processing / terms pages.
 
 ### Data to collect
 
 | Policy | How to find |
 |--------|-------------|
-| **Default retention** | Provider privacy policy or data retention page. Common values: 30 days (abuse monitoring), 7 days, 0 days (ZDR default). |
+| **API hosting region** | The country / region where the official first-party API stores and processes data. From the provider's privacy policy / ToS / data-processing addendum (look for "data center," "servers located in," "cross-border," "storage location"). Common patterns: single region (e.g., "US data center", "PRC servers"), configurable (customer selects PRC or overseas), or split by platform (e.g., international `.io` vs mainland site). Note the operating entity and governing law if given. If not published, state "not published." For open-weight models, note that **self-hosting lets the region be chosen freely**. |
+| **Default retention** | Provider privacy policy or data retention page. Common values: 30 days (abuse monitoring), 7 days, 0 days (ZDR default), or "as long as necessary" / account-lifetime (no fixed numeric window — state this explicitly rather than inventing a number). |
 | **ZDR (Zero Data Retention)** | Whether ZDR is available on request, on Enterprise plans, or as default. Note any exceptions (e.g., "Covered Models" excluded from ZDR, non-ZDR-eligible features like extended prompt caching). |
-| **Other retention tiers** | List all retention periods that apply: e.g., flagged content (2yr), classifier metadata (7yr), feedback (5yr), Activity Feed (6yr), fine-tuning data (until deleted +30d), extended KV cache retention. |
-| **No Training** | Whether the provider trains on API data by default. Confirm if opt-out is available or if training is opt-in only. Note if open-weight self-hosting eliminates the concern entirely. |
+| **Other retention tiers** | List all retention periods that apply: e.g., flagged content (2yr), classifier metadata (7yr), feedback (5yr), Activity Feed (6yr), fine-tuning data (until deleted +30d), log data (3mo), account data (~30d post-deletion), extended KV cache retention. |
+| **No Training** | Whether the provider trains on API data by default. Confirm if opt-out is available, opt-in only, or explicitly "no training." Note if open-weight self-hosting eliminates the concern entirely. If not published, state "not published." |
 
 ### Common provider policies (reference)
 
-| Provider | Default Retention | ZDR Available | Other Tiers | No Training |
-|----------|:-----------------:|:-------------:|-------------|:-----------:|
-| **OpenAI** | 30 days | Yes (on request) | 24h KV cache (non-ZDR), fine-tune: until deleted +30d | Yes (API, since Mar 2023) |
-| **Anthropic** | 30 days (7d post-Sep 2025) | Yes (Enterprise) | Flagged: 2yr, classifier: 7yr, feedback: 5yr, Activity Feed: 6yr. Some "Covered Models" excluded from ZDR. | Yes (API by default) |
-| **Google (Vertex AI)** | Configurable | Configurable | Varies by region/agreement | Yes (API by default) |
-| **Z.AI** | 0 days (ZDR default) | Default | N/A — open-weight (MIT) enables self-host | Yes |
-| **Moonshot AI** | 30 days | Yes (via gateway) | Self-host via open weights (Modified MIT) | Claimed (API); self-host eliminates |
-| **Mistral** | 30 days | Yes (Scale plan, on request) | Stateful features excluded from ZDR | Yes (API by default) |
+| Provider | API Hosting Region | Default Retention | ZDR Available | Other Tiers | No Training |
+|----------|-------------------|:-----------------:|:-------------:|-------------|:-----------:|
+| **OpenAI** | US (global infra) | 30 days | Yes (on request) | 24h KV cache (non-ZDR), fine-tune: until deleted +30d | Yes (API, since Mar 2023) |
+| **Anthropic** | US | 30 days (7d post-Sep 2025) | Yes (Enterprise) | Flagged: 2yr, classifier: 7yr, feedback: 5yr, Activity Feed: 6yr. Some "Covered Models" excluded from ZDR. | Yes (API by default) |
+| **Google (Vertex AI)** | Configurable (region-selectable) | Configurable | Configurable | Varies by region/agreement | Yes (API by default) |
+| **Z.AI** | China / self-host | 0 days (ZDR default) | Default | N/A — open-weight (MIT) enables self-host | Yes |
+| **Moonshot AI** | China / self-host | 30 days | Yes (via gateway) | Self-host via open weights (Modified MIT) | Claimed (API); self-host eliminates |
+| **Mistral** | EU | 30 days | Yes (Scale plan, on request) | Stateful features excluded from ZDR | Yes (API by default) |
+| **DeepSeek** | China (PRC servers) | Account lifetime / "as necessary" (no fixed window) | Not published | Logs "as necessary" | Trains by default; opt-out via email |
+| **Tencent (Hunyuan)** | Configurable: PRC or overseas (SG/HK; EU controller in NL) | For duration of service; logs 3mo; account data ~30d post-deletion | Not published | — | Not published |
+| **Xiaomi (MiMo)** | Overseas: Netherlands + Singapore; PRC separate | "As long as necessary" (no fixed window) | Not published | — | **No (explicitly stated)** |
+| **MiniMax** | US (intl `.io`); mainland `minimaxi.com` differs | "As long as necessary" (no fixed window) | Not published | Cloned voices auto-deleted after 7d | Not published (only "no profiling/ad-targeting") |
 
-When data conflicts across sources, prefer the provider's official documentation. Note the source of each policy value.
+When data conflicts across sources, prefer the provider's official documentation. Note the source of each policy value. For the hosting region, always distinguish the **official-API region** from the **self-host** case (open-weight models let the operator choose the region).
 
 ## Step 3 — Combine and present
 
@@ -220,10 +224,11 @@ Present the combined report in two sections:
 | Time per Task | {seconds}s ({min}min) | Artificial Analysis |
 | Total Output Tokens (Index) | {tokens} | Artificial Analysis |
 | OWM (Open Weights Model) | Yes / No | Artificial Analysis |
-| Retention (API default) | {days} | Provider docs / gateway |
+| API Hosting Region | {region / country} | Provider docs |
+| Retention (API default) | {days / "as necessary"} | Provider docs / gateway |
 | Retention (API ZDR) | Available / Not available / Default | Provider docs / gateway |
 | Retention (other tiers) | {list of policies} | Provider docs / gateway |
-| No Training (API) | Yes / No / Claimed | Provider docs / gateway |
+| No Training (API) | Yes / No / Claimed / Not published | Provider docs / gateway |
 
 ### Per-Benchmark Scores
 
@@ -403,9 +408,10 @@ The **Cache hit price** row is mandatory in the Pricing table. The **Blended pri
 | Item | Model A | Model B | Model C |
 |------|:---:|:---:|:---:|
 | OWM (Open Weights Model) | Yes / No | ... | ... |
-| Retention (API default) | {days} | ... | ... |
+| API Hosting Region | {region / country} | ... | ... |
+| Retention (API default) | {days / "as necessary"} | ... | ... |
 | Retention (API ZDR) | Available / Default / On request / Enterprise / — | ... | ... |
-| No Training (API) | Yes / No / Claimed | ... | ... |
+| No Training (API) | Yes / No / Claimed / Not published | ... | ... |
 ```
 
 Field notes for the Basic Information tables:
@@ -413,10 +419,11 @@ Field notes for the Basic Information tables:
 - **Total / Active params**: **always report as `{total}B / {active}B`** (two values separated by ` / `). Total comes from AA `parameters` or Stratix `parameters`; active comes from AA `inferenceParametersActiveBillions`. For MoE models the two differ (e.g., `744B / 40B`); for dense models they are equal (`{n}B / {n}B (dense)`). If a value is undisclosed, fill that side with `非公開` / `N/A` (e.g., `非公開 / 非公開` for closed proprietary models, or `2500B / 非公開` when only total is known). Never collapse to a single number.
 - **Cache hit price**: AA `cacheHitPrice` (mandatory row in the Pricing table). **Blended price**: AA `price1mBlended7To2To1` — a **cache-aware** weighted average at the ratio **input : output : cache = 7 : 2 : 1**. Always show the ratio in the label. If the AA field is missing, compute it as `0.7 × input_price + 0.2 × output_price + 0.1 × cache_hit_price`.
 - **AA Intelligence / Coding / Agentic Index**: AA `intelligenceIndex` / `codingIndex` / `agenticIndex`.
-- **Total Eval Cost**: prefer AA official `intelligenceIndexCost.total`. If the model is **not present** in the AA cost dataset, compute an approximation as `input_tokens × input_price + output_tokens × output_price` (cache not considered) from `canonicalIntelligenceIndexTokenCount`, and clearly mark it as an approximation (e.g., `≈$X (approx)`).
+- **Total Eval Cost**: prefer AA official `intelligenceIndexCost.total`. If the model is **not present** in the AA cost dataset, compute an approximation as `input_tokens × input_price + output_tokens × output_price` (cache not considered) from `canonicalIntelligenceIndexTokenCount`, and clearly mark it as an approximation (e.g., `≈$X (approx)`). If neither the official value nor an approximation can be obtained (e.g., pricing not published, as for a free preview), **use `0`** for the Total Eval Cost and mark it (e.g., `$0 (n/a)`), so downstream calculations (bubble-size scaling) remain well-defined.
 - **Time per Task**: AA `intelligenceIndexTimePerTask` (seconds; also show minutes). This is a computed value (output tokens per task ÷ output speed, weighted), excluding TTFT/overhead.
 - **OWM**: Yes if `isOpenWeights` is true. Note that open-weight models (self-hostable) can eliminate retention/training concerns entirely.
-- **Retention / No Training**: from provider docs / gateway listings (see Step 2.5). Optionally add a **Retention (other tiers)** row when relevant.
+- **API Hosting Region**: the country/region where the official first-party API stores/processes data (from provider docs — see Step 2.5). Distinguish the **official-API region** from the **self-host** case; for open-weight models note that self-hosting lets the operator choose the region freely. Use "configurable" when the provider lets customers select, and "not published" when undisclosed.
+- **Retention / No Training**: from provider docs / gateway listings (see Step 2.5). Optionally add a **Retention (other tiers)** row when relevant. When a provider only offers "as long as necessary" / account-lifetime with no fixed numeric window, state that verbatim rather than inventing a day-count.
 - Add a footnote for any provider-specific pricing quirks (e.g., per-search surcharge) and cite sources under each section.
 
 Optionally follow with a **Speed & Latency supplement** table (`Output Speed tok/s`, `TTFT`) using AA `medianOutputSpeed` and `medianTimeToFirstAnswerToken` / TTFT.
@@ -436,7 +443,7 @@ Organize the comparison report into a **main body** and an **Appendix**, so the 
 **Appendix** (introduce with a top-level `# Appendix` heading, larger than the section headings):
 
 - **Cost efficiency detail** — the full cost-efficiency table (Total Eval Cost, Cost per Task, total tokens, Time per Task, E2E response time) and the **per-evaluation cost breakdown** (`weightedCostPerTask`). This detail belongs in the Appendix, *after* the `# Appendix` heading, not in the main body.
-- **Retention & Privacy detail** — the full per-provider retention/training policy table and verdict.
+- **Retention & Privacy detail** — the full per-provider table (API hosting region, retention tiers, ZDR, training policy) and verdict, with source URLs for each policy value.
 - **Data sources & notes** — sources, harness-difference caveats, approximation notes, missing-data footnotes.
 
 Rules:
@@ -455,7 +462,7 @@ When the comparison report is turned into an HTML slide deck (e.g., via the slid
 | Agenda | Section list | — |
 | Executive Summary | Verdict + per-model cards | — |
 | **Basic Spec & Pricing** | Attributes + pricing table (incl. cache row, blended ratio label) | Table |
-| **Sovereignty & Privacy** (immediately after Basic Spec & Pricing) | OWM, retention, ZDR, self-host, no-training | Table + notes |
+| **Sovereignty & Privacy** (immediately after Basic Spec & Pricing) | OWM, API hosting region, retention, ZDR, self-host, no-training | Table + notes |
 | **Intelligence & Cost** | AA Intelligence Index vs **Total Eval Cost** | Chart (2 bars, or scatter Index-vs-Cost) |
 | **Reasoning** (own slide) | Left: GPQA Diamond bar (primary). Right: bubble chart | Bar + Bubble |
 | **Knowledge** (own slide) | Left: AA-Omniscience Index bar (primary). Right: bubble chart | Bar + Bubble |
@@ -466,18 +473,18 @@ When the comparison report is turned into an HTML slide deck (e.g., via the slid
 
 Chart & ordering rules:
 
-- **Intelligence & Cost slide:** replace any "speed"-based intelligence slide with **AA Intelligence Index vs Total Eval Cost**. Use **Total Eval Cost** (AA `intelligenceIndexCost.total`; approximate + mark if absent), **not** cost-per-task or speed, as the cost axis/series. Speed & latency (tok/s, TTFT) move to a supplementary strip or the Appendix, never as the primary intelligence comparison.
+- **Intelligence & Cost slide:** replace any "speed"-based intelligence slide with **AA Intelligence Index vs Total Eval Cost**. Use **Total Eval Cost** (AA `intelligenceIndexCost.total`), **not** cost-per-task or speed, as the cost axis/series. If the value can only be approximated, compute it and mark it as `≈$X (approx)`; **if it cannot be obtained at all (e.g., unpriced preview), use `0` — never `null`/`undefined`/a gap** — so the cost bar/line still plots a point for that model (a zero-height bar or a point on the axis at 0), and note in the caption that the `$0` is a placeholder for "cost unavailable," not a real cost. Speed & latency (tok/s, TTFT) move to a supplementary strip or the Appendix, never as the primary intelligence comparison.
 - **Reasoning and Knowledge are separate slides**, each shown as a chart (bar / grouped bar per benchmark). Do not put reasoning and knowledge tables on the same slide. Reasoning's primary series is **GPQA Diamond** (AA `evaluations.gpqa`); HLE / AIME / MATH-500 are supplements. Knowledge's primary series is the **AA-Omniscience Index** (AA `"omniscience"`, static HTML); MMLU Pro / AGIEval / General QA are supplements.
 - **Coding and Agent are separate slides**, each shown as a chart. Do not combine coding and agent on one slide. Coding's primary series is the **AA Coding Index**; SWE-bench variants are supplements. Agent's primary series is the **AA Agentic Index**; if it cannot be obtained (not in the free API), fall back to **τ-Bench** and note the substitution, with Terminal-Bench 2.1 as a supplement.
-- **Sovereignty & Privacy** must be placed **immediately after** the Basic Spec & Pricing slide (moved up from the cost/appendix area).
+- **Sovereignty & Privacy** must be placed **immediately after** the Basic Spec & Pricing slide (moved up from the cost/appendix area). Include a per-model **API hosting region** row/field (from Step 2.5) alongside OWM, retention, ZDR, and no-training — and note that self-hosting an open-weight model lets the region be chosen freely.
 - **Each capability slide (Reasoning / Knowledge / Coding / Agent) uses a two-pane layout:** the **left pane** is a horizontal bar chart of that category's **primary index** across all models; the **right pane** is a **bubble chart** (same on every capability slide). Supplementary benchmarks (HLE/AIME/MATH, MMLU Pro/AGIEval, SWE-bench variants, Terminal-Bench/τ-Bench) move out of a second bar chart into the verdict card / footnote to make room for the bubble.
 - **Capability bubble chart spec (identical axes on all four capability slides):**
   - **X-axis** = **Time per Task** (seconds; AA `intelligenceIndexTimePerTask`, lower is better). Use the same value for all four slides since AA reports one Index-level time-per-task per model.
   - **Y-axis** = that slide's **primary index score** (GPQA Diamond % / AA-Omniscience Index / AA Coding Index / AA Agentic Index).
-  - **Bubble size** = **Total Eval Cost** (AA `intelligenceIndexCost.total`, USD). Scale radius as `r = sqrt(cost)/K` (area ∝ cost; pick K, e.g. 6, so the largest bubble fits).
+  - **Bubble size** = **Total Eval Cost** (AA `intelligenceIndexCost.total`, USD). Scale radius as `r = sqrt(cost)/K` (area ∝ cost; pick K, e.g. 6, so the largest bubble fits). **When Total Eval Cost is `0` (unavailable/unpriced), set the radius to a small but clearly visible minimum (e.g., `2`)** — never `0` (a radius of `0` is invisible) — so the model still appears on the chart. Additionally, give the zero-cost bubble a solid colored **border** (e.g., `borderWidth: 4`, same color) so it reads as a distinct marker, and note in the caption that its size is a placeholder (cost unavailable), not a real cost. Implementation: `r = cost > 0 ? sqrt(cost)/K : 2`.
   - One bubble per model, one distinct color per model (consistent across all slides), a top legend, and a tooltip showing `{model}: {score}, {time}s, Eval ${cost}`.
   - Chart.js `type:'bubble'`; label the axes ("Time per Task (s) · lower is better" / the index name). Read the bubble as "top-left + small = best" (high score, fast, cheap).
-  - If a model lacks Time per Task or Eval Cost, omit its bubble (keep it in the left bar) and note the omission.
+  - If a model lacks Time per Task, omit its bubble (keep it in the left bar) and note the omission. If it only lacks Eval Cost, still plot it with radius `1` (per the rule above) rather than omitting it.
 - Missing data (e.g., a model with no Stratix per-benchmark scores) is shown as `—` in the chart legend/labels with a footnote.
 
 ### Data Sources
@@ -539,7 +546,7 @@ Match model position in the list to the corresponding dollar value. The number o
 
 - **Tool**: Python with `matplotlib`
 - **Canvas**: `figsize=(10, 7)`
-- **Bubble scaling**: `sizes = [cost * 300 for cost in cost_per_task]` (adjust multiplier as needed)
+- **Bubble scaling**: `sizes = [cost * 300 for cost in cost_per_task]` (adjust multiplier as needed). If a model's cost is `0` (unavailable/unpriced), use a small but clearly visible marker size instead of `0` (matplotlib `s` is area in points²; a value like `1` is invisible) — e.g., `sizes = [(cost * 300) if cost > 0 else 10 for cost in cost_per_task]`, and give that point a colored edge so it reads as a placeholder marker.
 - **Colors**: one distinct color per model (use hex codes)
 - **Labels**: model name annotated with offset (`xytext`) + white bbox
 - **Legend**: bubble size legend showing 3 reference values (e.g., $0.20 / $0.30 / $0.50)
