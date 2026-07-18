@@ -1,11 +1,33 @@
 ---
 name: collect-benchmark
-description: Collect AI model benchmark data from Artificial Analysis and LayerLens Stratix. Prefers the official Artificial Analysis Data API (x-api-key) for Intelligence/Coding/Math indices and pricing, falls back to web scraping; uses the Stratix REST API for per-benchmark scores. Model name is the only required input. Use when the user asks for benchmark data, model scores, model comparison, or evaluation results for a specific model.
+description: Collect AI model benchmark data from Artificial Analysis and LayerLens Stratix. Prefers the official Artificial Analysis Data API (x-api-key) for Intelligence/Coding/Math indices and pricing, falls back to web scraping; uses the Stratix REST API for per-benchmark scores. Basic specs (parameters, license/open-weights, context, release) are cross-checked against the model developer's official site, which is authoritative on conflict. Model name is the only required input. Use when the user asks for benchmark data, model scores, model comparison, or evaluation results for a specific model.
 ---
 
 # Collect Model Benchmark Data
 
 Collect benchmark data for a given AI model from two independent evaluation platforms: **Artificial Analysis** (`artificialanalysis.ai`) and **LayerLens Stratix** (`stratix.layerlens.ai`).
+
+## Quick start — use the TypeScript scripts
+
+The metric-fetching logic is packaged as TypeScript scripts under [`scripts/`](scripts/) (see [`scripts/README.md`](scripts/README.md)). **Prefer these scripts over ad-hoc `curl`/parsing** — they handle AA Data API + static-page index extraction (agentic/omniscience/eval-cost) and the Stratix REST API, with separator-insensitive model matching.
+
+```bash
+# Combined AA + SX metrics for one or more models (JSON on stdout)
+npx tsx scripts/fetch-metrics.ts "MiniMax M3" "DeepSeek V4 Flash" "Nemotron 3 Ultra"
+
+# Disambiguate variants (Reasoning / Non-reasoning / High Effort ...) first
+npx tsx scripts/fetch-metrics.ts --list "deepseek v4 flash"
+
+# One platform only
+npx tsx scripts/fetch-metrics.ts --aa-only "Nemotron 3 Ultra"
+npx tsx scripts/fetch-metrics.ts --sx-only "MiMo-V2.5"
+```
+
+- Env: `AA_API_KEY` (required for AA), `LAYERLENS_STRATIX_API_KEY` (optional for the full SX catalog).
+- Output: a JSON array of `CombinedMetrics` — `{ query, aa: { api, page }, sx: { model, evaluations }, notes[] }`.
+- The scripts expose reusable functions too (`getAAMetrics`, `getSXMetrics`, `parsePageMetrics`, …) — import them from `scripts/aa.ts` / `scripts/stratix.ts` for custom pipelines.
+
+Steps 1–2 below document the underlying data sources and field mappings (used by the scripts, and as a manual fallback when Node/`tsx` is unavailable). **Step 2.6 is a mandatory cross-check of basic specs (parameters, license/open-weights, context, release, modality) against the model developer's official site — the official source wins on conflict.** Steps 3–5 cover how to combine, compare, and visualize the collected data.
 
 ## Parameters
 
@@ -14,6 +36,8 @@ Collect benchmark data for a given AI model from two independent evaluation plat
 - **LayerLens API Key** (optional): If available, pass via `x-api-key` header to the Stratix API for full model catalog access (233 models vs 168 public).
 
 ## Step 1 — Search Artificial Analysis
+
+> Implemented by [`scripts/aa.ts`](scripts/aa.ts) (`fetchAAModels`, `fetchAAPageHtml`, `parsePageMetrics`, `getAAMetrics`). The subsections below document the sources those functions use; run the script rather than reproducing the `curl`/regex by hand unless Node is unavailable.
 
 Artificial Analysis provides Intelligence Index scores, speed (tokens/s), pricing, latency, per-benchmark breakdowns, and **evaluation cost data**.
 
@@ -104,6 +128,8 @@ Prefer the **API fields (approach A)** where available; fall back to page text (
 
 ## Step 2 — Search LayerLens Stratix
 
+> Implemented by [`scripts/stratix.ts`](scripts/stratix.ts) (`fetchSXModels`, `findSXModels`, `fetchSXEvaluations`, `getSXMetrics`). The subsections below document the endpoints those functions call.
+
 LayerLens Stratix provides per-benchmark evaluation scores for 233+ models across 158+ benchmarks via a REST API.
 
 ### Discover the API base
@@ -189,6 +215,45 @@ For each model, collect the **official first-party API hosting region**, the dat
 | **MiniMax** | US (intl `.io`); mainland `minimaxi.com` differs | "As long as necessary" (no fixed window) | Not published | Cloned voices auto-deleted after 7d | Not published (only "no profiling/ad-targeting") |
 
 When data conflicts across sources, prefer the provider's official documentation. Note the source of each policy value. For the hosting region, always distinguish the **official-API region** from the **self-host** case (open-weight models let the operator choose the region).
+
+## Step 2.6 — Verify Basic Specs Against the Model's Official Site (mandatory)
+
+Benchmark platforms (Artificial Analysis, LayerLens Stratix) frequently carry **stale, rounded, or wrong basic-spec metadata** — especially for models released within the last few weeks. Their `parameters`, `license` / `open_weights`, `context_length`, release date, and modality fields are entered manually and often **disagree with the model developer's own documentation** (e.g., a model listed as `Proprietary` on a platform while the developer's site announces it as open-source; a total-parameter count that differs by hundreds of billions between AA and SX).
+
+**Therefore, for every model, you MUST cross-check the following "basic spec" fields against the developer's official site/docs and prefer the official value when they conflict.** This is not optional — the official developer source is the authority for basic specs.
+
+### Fields that MUST be verified against the official site
+
+| Field | Why verify | Typical official source |
+|-------|-----------|-------------------------|
+| **Total parameters** | AA (`parameters`) and SX (`parameters`) often disagree (e.g., 2500B vs 2800B). | Model card / technical blog / release announcement |
+| **Active parameters (MoE)** | Platforms rarely expose per-token active params; the developer may state the expert config (e.g., "activates 16 of 896 experts"). | Technical report / architecture section |
+| **License / Open Weights (OWM)** | Platforms may mislabel a just-released open model as `Proprietary`, or vice-versa. This directly changes the **Sovereignty (local deployment)** verdict. | License page / model card / "open-source" claim on blog |
+| **Context window** | Rounding differs (e.g., 1,000,000 vs 1,048,576); some platforms cap or truncate. | API docs / model card |
+| **Release date** | Preview vs GA dates are often confused. | Announcement / changelog |
+| **Modality** | Text-only vs multimodal (image/video) may be out of date. | API docs / model card |
+| **Weights availability date** | For open models not yet released, note the scheduled weights-release date. | Blog / announcement |
+
+### How to find the official source
+
+1. **Identify the developer** from AA `model_creator.name` (Step 1) — e.g., Moonshot AI, OpenAI, Anthropic, Google, Z.AI, Meta.
+2. **Fetch the official model page/docs** with WebFetch. Preferred order:
+   - The developer's **platform/API docs** (e.g., `platform.<vendor>.ai/docs`, `platform.<vendor>.ai/docs/llms.txt` if present — a `llms.txt` index lists all doc pages).
+   - The **model card / quickstart / "introducing <model>" technical blog** (often linked from the docs or the developer's homepage).
+   - The **license page** and **release announcement / changelog**.
+3. **Extract the basic-spec fields** listed above from that official text.
+4. **Compare with the AA and SX values** collected in Steps 1–2.
+
+### Conflict-resolution rule
+
+- **The developer's official documentation is authoritative for basic specs.** When the official value conflicts with AA/SX, **use the official value** as the displayed number.
+- **Always record the discrepancy in a footnote**, e.g. `2800B (official) / 2500B (SX) / 2800B (AA)` or a note like `\* SX/AA list Proprietary, but the developer announced it as open-source (weights due YYYY-MM-DD); OWM=Yes per official`.
+- If the official site is unreachable or does not state a field, **fall back to AA, then SX**, and mark the value's source accordingly (never fabricate).
+- A conflict on **License / Open Weights** is high-impact: it changes the **Sovereignty (local deployment)** section and the OWM row. Re-evaluate those after correcting the value.
+
+### Recording sources
+
+Add a **Basic-spec source** note per model (e.g., in the Appendix "Data sources & notes") citing the official URL and the date checked, and list every field where the official value overrode a platform value.
 
 ## Step 3 — Combine and present
 
@@ -403,6 +468,8 @@ The **Cache hit price** row is mandatory in the Pricing table. The **Blended pri
 | Time per Task | {s}s ({min}min) | ... | ... |
 ```
 
+In the **HTML slide deck**, render these two Cost & Speed rows (**Total Eval Cost** and **Time per Task**) as extra rows on the **Basic Spec & Pricing** slide (below the Pricing block), not as a separate slide — keeping the concise cost summary next to the specs while the detailed cost-efficiency breakdown stays in the Appendix.
+
 **Sovereignty**
 
 ```
@@ -419,7 +486,8 @@ The **Cache hit price** row is mandatory in the Pricing table. The **Blended pri
 
 Field notes for the Basic Information tables:
 
-- **Total / Active params**: **always report as `{total}B / {active}B`** (two values separated by ` / `). Total comes from AA `parameters` or Stratix `parameters`; active comes from AA `inferenceParametersActiveBillions`. For MoE models the two differ (e.g., `744B / 40B`); for dense models they are equal (`{n}B / {n}B (dense)`). If a value is undisclosed, fill that side with `非公開` / `N/A` (e.g., `非公開 / 非公開` for closed proprietary models, or `2500B / 非公開` when only total is known). Never collapse to a single number.
+- **Total / Active params**: **always report as `{total}B / {active}B`** (two values separated by ` / `). Total comes from AA `parameters` or Stratix `parameters`; active comes from AA `inferenceParametersActiveBillions`. For MoE models the two differ (e.g., `744B / 40B`); for dense models they are equal (`{n}B / {n}B (dense)`). If a value is undisclosed, fill that side with `非公開` / `N/A` (e.g., `非公開 / 非公開` for closed proprietary models, or `2500B / 非公開` when only total is known). Never collapse to a single number. **Verify the total (and, where stated, the active/expert config) against the developer's official site per Step 2.6, and prefer the official value on conflict** — AA and SX frequently disagree on parameter counts; footnote the discrepancy (e.g., `2800B (official) / 2500B (SX)`).
+- **License / OWM (Open Weights)**: **verify against the developer's official site per Step 2.6, and prefer the official value on conflict.** Benchmark platforms often mislabel a just-released open model as `Proprietary` (or the reverse). A correction here changes the OWM row and the **Sovereignty (local deployment)** verdict, so re-evaluate those after correcting. If weights are announced but not yet released, note the scheduled release date (e.g., `open-source (weights due YYYY-MM-DD)`).
 - **Cache hit price**: AA `cacheHitPrice` (mandatory row in the Pricing table). **Blended price**: AA `price1mBlended7To2To1` — a **cache-aware** weighted average at the ratio **input : output : cache = 7 : 2 : 1**. Always show the ratio in the label. If the AA field is missing, compute it as `0.7 × input_price + 0.2 × output_price + 0.1 × cache_hit_price`.
 - **AA Intelligence / Coding / Agentic Index**: AA `intelligenceIndex` / `codingIndex` / `agenticIndex`.
 - **Total Eval Cost**: prefer AA official `intelligenceIndexCost.total`. If the model is **not present** in the AA cost dataset, compute an approximation as `input_tokens × input_price + output_tokens × output_price` (cache not considered) from `canonicalIntelligenceIndexTokenCount`, and clearly mark it as an approximation (e.g., `≈$X (approx)`). If neither the official value nor an approximation can be obtained (e.g., pricing not published, as for a free preview), **use `0`** for the Total Eval Cost and mark it (e.g., `$0 (n/a)`), so downstream calculations (bubble-size scaling) remain well-defined.
@@ -453,7 +521,7 @@ Organize the comparison report into a **main body** and an **Appendix**, so the 
 
 - **Cost efficiency detail** — the full cost-efficiency table (Total Eval Cost, Cost per Task, total tokens, Time per Task, E2E response time) and the **per-evaluation cost breakdown** (`weightedCostPerTask`). This detail belongs in the Appendix, *after* the `# Appendix` heading, not in the main body.
 - **Retention & Privacy detail** — the full per-provider table (API hosting region, retention tiers, ZDR, training policy) and verdict, with source URLs for each policy value.
-- **Data sources & notes** — sources, harness-difference caveats, approximation notes, missing-data footnotes.
+- **Data sources & notes** — sources, harness-difference caveats, approximation notes, missing-data footnotes, and the **per-model basic-spec source note** from Step 2.6 (official URL + date checked + every field where the official value overrode a platform value).
 
 Rules:
 
@@ -470,9 +538,9 @@ When the comparison report is turned into an HTML slide deck (e.g., via the slid
 | Cover | Title + model names | — |
 | Agenda | Section list | — |
 | Executive Summary | Verdict + per-model cards | — |
-| **Basic Spec & Pricing** | Attributes + pricing table (incl. cache row, blended ratio label) | Table |
+| **Basic Spec & Pricing** | Attributes + pricing table (incl. cache row, blended ratio label) **+ Cost & Speed rows (Total Eval Cost, Time per Task)** | Table |
 | **Sovereignty & Privacy** (immediately after Basic Spec & Pricing) | Developer company & country, OWM, APIホストリージョン, retention, ZDR, self-host, no-training | Table + notes |
-| **Intelligence & Cost** | AA Intelligence Index vs **Total Eval Cost** | Grouped bar chart (2 series per model) |
+| **Intelligence & Cost** | Left: AA Intelligence Index bar. Right: bubble chart (Intelligence vs Time per Task, size = Total Eval Cost) | Bar + Bubble |
 | **Reasoning** (own slide) | Left: GPQA Diamond bar (primary). Right: bubble chart | Bar + Bubble |
 | **Knowledge** (own slide) | Left: AA-Omniscience Index bar (primary). Right: bubble chart | Bar + Bubble |
 | **Coding** (own slide) | Left: AA Coding Index bar (primary). Right: bubble chart | Bar + Bubble |
@@ -482,9 +550,11 @@ When the comparison report is turned into an HTML slide deck (e.g., via the slid
 
 Chart & ordering rules:
 
-- **Intelligence & Cost slide:** replace any "speed"-based intelligence slide with **AA Intelligence Index vs Total Eval Cost**. Use **Total Eval Cost** (AA `intelligenceIndexCost.total`), **not** cost-per-task or speed, as the cost axis/series. If the value can only be approximated, compute it and mark it as `≈$X (approx)`; **if it cannot be obtained at all (e.g., unpriced preview), use `0` — never `null`/`undefined`/a gap** — so the cost bar still plots a point for that model (a zero-height bar), and note in the caption that the `$0` is a placeholder for "cost unavailable," not a real cost. Speed & latency (tok/s, TTFT) move to a supplementary strip or the Appendix, never as the primary intelligence comparison.
-  - **Chart type: grouped bar chart with two series** (Intelligence Index on the left Y-axis, Total Eval Cost on the right Y-axis), one pair of bars per model. **Do not use a line chart** for cost — a line implies continuity/accumulation between models and is misread as a running total; the values are independent per-model figures, not a cumulative sum.
-  - **Colors:** the **Intelligence Index** series uses the **same per-model color palette as the capability slides** (one distinct color per model, consistent across the whole deck — e.g. Hy3=purple, MiMo=orange, DeepSeek=sky, MiniMax=green, Nemotron=red). The **Total Eval Cost** series is a single neutral **black/near-black** (e.g. `#0F172A`) for every model, so cost reads as one uniform series and is visually distinct from the colored score bars.
+- **Intelligence & Cost slide:** use the **same two-pane layout as the capability slides** (left bar + right bubble), so the whole deck's score slides are visually consistent. **Do not use a grouped/dual-axis bar chart or a line chart** for this slide.
+  - **Left pane:** a horizontal bar chart of the **AA Intelligence Index** (`intelligenceIndex`) across all models, one distinct per-model color (the same palette as the capability slides).
+  - **Right pane:** a **bubble chart with the identical axes/encoding as the capability bubble charts** — **X = Time per Task** (AA `intelligenceIndexTimePerTask`, seconds, lower is better), **Y = AA Intelligence Index**, **bubble size = Total Eval Cost** (AA `intelligenceIndexCost.total`, USD, `r = cost > 0 ? sqrt(cost)/K : 2`). One bubble per model, top legend, tooltip `{model}: {score}, {time}s, Eval ${cost}`. Read as "top-left + small bubble = best" (high intelligence, fast, cheap).
+  - Use **Total Eval Cost** (not cost-per-task or speed) as the bubble-size/cost encoding. If it can only be approximated, mark it `≈$X (approx)`; **if it cannot be obtained at all (e.g., unpriced preview), use `0` — never `null`/`undefined`/a gap** — and plot the bubble at the minimum radius (`2`) with a solid colored border, noting in the caption that the size is a placeholder ("cost unavailable"), not a real cost.
+  - Speed & latency (tok/s, TTFT) do not go on this slide's charts; keep them in the Basic Spec "Cost & Speed" rows or the Appendix.
 - **Reasoning and Knowledge are separate slides**, each shown as a chart (bar / grouped bar per benchmark). Do not put reasoning and knowledge tables on the same slide. Reasoning's primary series is **GPQA Diamond** (AA `evaluations.gpqa`); HLE / AIME / MATH-500 are supplements. Knowledge's primary series is the **AA-Omniscience Index** (AA `"omniscience"`, static HTML); MMLU Pro / AGIEval / General QA are supplements.
 - **Coding and Agent are separate slides**, each shown as a chart. Do not combine coding and agent on one slide. Coding's primary series is the **AA Coding Index**; SWE-bench variants are supplements. Agent's primary series is the **AA Agentic Index**; if it cannot be obtained (not in the free API), fall back to **τ-Bench** and note the substitution, with Terminal-Bench 2.1 as a supplement.
 - **Sovereignty & Privacy** must be placed **immediately after** the Basic Spec & Pricing slide (moved up from the cost/appendix area). For each model show the **developer company and its home country** (e.g., Tencent / China) and a per-model **API hosting region** field (labeled **"APIホストリージョン"** in Japanese decks; from Step 2.5) alongside OWM, retention, ZDR, and no-training — and note that self-hosting an open-weight model lets the region be chosen freely. Keep the developer country distinct from the API hosting region (a model may be developed in one country but served from another).
@@ -510,6 +580,7 @@ Chart & ordering rules:
 | **Taubench.com** | τ-Bench scores per model |
 | **LLM-Stats.com** | Cross-model comparison pages with BrowseComp, SWE-bench, τ-Bench data |
 | **Vendor model cards** | Self-reported scores (verify against independent sources) |
+| **Developer official site / docs** (Step 2.6) | **Authoritative for basic specs** — total/active parameters, license/open-weights, context window, release date, modality. Prefer over AA/SX when they conflict. Look for `platform.<vendor>.ai/docs` (and `llms.txt`), the model card / "introducing <model>" blog, license page, and changelog. |
 
 ### Handling Missing Data
 
