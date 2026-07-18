@@ -166,7 +166,8 @@ For each model, collect the **official first-party API hosting region**, the dat
 
 | Policy | How to find |
 |--------|-------------|
-| **API hosting region** | The country / region where the official first-party API stores and processes data. From the provider's privacy policy / ToS / data-processing addendum (look for "data center," "servers located in," "cross-border," "storage location"). Common patterns: single region (e.g., "US data center", "PRC servers"), configurable (customer selects PRC or overseas), or split by platform (e.g., international `.io` vs mainland site). Note the operating entity and governing law if given. If not published, state "not published." For open-weight models, note that **self-hosting lets the region be chosen freely**. |
+| **Developer (company) & country** | The organization that developed the model (AA `model_creator.name`) and its home country. This is a sovereignty signal separate from the API hosting region — keep both. E.g., Tencent / China, Xiaomi / China, DeepSeek / China, MiniMax / China. |
+| **API hosting region** (a.k.a. "APIホストリージョン") | The country / region where the official first-party API stores and processes data. From the provider's privacy policy / ToS / data-processing addendum (look for "data center," "servers located in," "cross-border," "storage location"). Common patterns: single region (e.g., "US data center", "PRC servers"), configurable (customer selects PRC or overseas), or split by platform (e.g., international `.io` vs mainland site). Note the operating entity and governing law if given. If not published, state "not published." For open-weight models, note that **self-hosting lets the region be chosen freely**. |
 | **Default retention** | Provider privacy policy or data retention page. Common values: 30 days (abuse monitoring), 7 days, 0 days (ZDR default), or "as long as necessary" / account-lifetime (no fixed numeric window — state this explicitly rather than inventing a number). |
 | **ZDR (Zero Data Retention)** | Whether ZDR is available on request, on Enterprise plans, or as default. Note any exceptions (e.g., "Covered Models" excluded from ZDR, non-ZDR-eligible features like extended prompt caching). |
 | **Other retention tiers** | List all retention periods that apply: e.g., flagged content (2yr), classifier metadata (7yr), feedback (5yr), Activity Feed (6yr), fine-tuning data (until deleted +30d), log data (3mo), account data (~30d post-deletion), extended KV cache retention. |
@@ -407,8 +408,10 @@ The **Cache hit price** row is mandatory in the Pricing table. The **Blended pri
 ```
 | Item | Model A | Model B | Model C |
 |------|:---:|:---:|:---:|
+| Developer (company) | {company} | ... | ... |
+| Developer country | {country} | ... | ... |
 | OWM (Open Weights Model) | Yes / No | ... | ... |
-| API Hosting Region | {region / country} | ... | ... |
+| API Hosting Region (APIホストリージョン) | {region / country} | ... | ... |
 | Retention (API default) | {days / "as necessary"} | ... | ... |
 | Retention (API ZDR) | Available / Default / On request / Enterprise / — | ... | ... |
 | No Training (API) | Yes / No / Claimed / Not published | ... | ... |
@@ -422,13 +425,19 @@ Field notes for the Basic Information tables:
 - **Total Eval Cost**: prefer AA official `intelligenceIndexCost.total`. If the model is **not present** in the AA cost dataset, compute an approximation as `input_tokens × input_price + output_tokens × output_price` (cache not considered) from `canonicalIntelligenceIndexTokenCount`, and clearly mark it as an approximation (e.g., `≈$X (approx)`). If neither the official value nor an approximation can be obtained (e.g., pricing not published, as for a free preview), **use `0`** for the Total Eval Cost and mark it (e.g., `$0 (n/a)`), so downstream calculations (bubble-size scaling) remain well-defined.
 - **Time per Task**: AA `intelligenceIndexTimePerTask` (seconds; also show minutes). This is a computed value (output tokens per task ÷ output speed, weighted), excluding TTFT/overhead.
 - **OWM**: Yes if `isOpenWeights` is true. Note that open-weight models (self-hostable) can eliminate retention/training concerns entirely.
-- **API Hosting Region**: the country/region where the official first-party API stores/processes data (from provider docs — see Step 2.5). Distinguish the **official-API region** from the **self-host** case; for open-weight models note that self-hosting lets the operator choose the region freely. Use "configurable" when the provider lets customers select, and "not published" when undisclosed.
+- **Developer (company) / Developer country**: the organization that developed/released the model and its home country (e.g., Tencent / China, Xiaomi / China, DeepSeek / China, MiniMax / China, OpenAI / USA, Mistral / France). From AA `model_creator.name` (company) and provider docs / general knowledge (country). Show the country with a flag emoji or name when useful. This is a sovereignty signal distinct from the API hosting region — a model can be developed in one country but served from another (e.g., a Chinese-developed model whose international API is hosted in the US).
+- **API Hosting Region** (label it **"APIホストリージョン"** in Japanese decks): the country/region where the official first-party API stores/processes data (from provider docs — see Step 2.5). Distinguish the **official-API region** from the **self-host** case; for open-weight models note that self-hosting lets the operator choose the region freely. Use "configurable" when the provider lets customers select, and "not published" when undisclosed.
 - **Retention / No Training**: from provider docs / gateway listings (see Step 2.5). Optionally add a **Retention (other tiers)** row when relevant. When a provider only offers "as long as necessary" / account-lifetime with no fixed numeric window, state that verbatim rather than inventing a day-count.
 - Add a footnote for any provider-specific pricing quirks (e.g., per-search surcharge) and cite sources under each section.
 
 Optionally follow with a **Speed & Latency supplement** table (`Output Speed tok/s`, `TTFT`) using AA `medianOutputSpeed` and `medianTimeToFirstAnswerToken` / TTFT.
 
-Add a **Retention & Privacy Verdict** row to the overall winner table highlighting which model has the most favorable privacy posture (open-weight + 0-day retention + no training is the strongest posture).
+Add **two Sovereignty rows** to the overall winner table (in place of a single "Retention & Privacy Verdict" row), evaluating the sovereignty posture under both deployment modes separately:
+
+- **Sovereignty (API use)** — evaluate the *official first-party API* posture: prefer the model that most clearly protects data (e.g., explicitly states "no training on inputs", 0-day / ZDR retention, favorable hosting region). Name the winner and, in the rationale, briefly contrast the others (who trains by default, who is unpublished).
+- **Sovereignty (local deployment)** — because open-weight models can be self-hosted (0-day retention, no training regardless of provider policy), **list all locally-deployable models rather than picking one winner**, and highlight those whose license permits **unrestricted commercial use** (no revenue cap, no MAU cap, no separate-permission requirement, no mandatory branding). Separate the "unrestricted commercial" models (e.g., Apache 2.0 / MIT / OpenMDW) from any that are "commercial with conditions" (e.g., community licenses with revenue thresholds or branding requirements).
+
+**In the rationale cell of both Sovereignty rows, append each model's developer company and developer country** (e.g., `Hy3=Tencent(China) / MiMo=Xiaomi(China) / DeepSeek=DeepSeek(China) / M3=MiniMax(China) / Nemotron=NVIDIA(USA)`), since the country of the developer is a key sovereignty signal distinct from the API hosting region. The strongest overall posture is: open-weight + permissive/unrestricted-commercial license + self-host (0-day retention, no training).
 
 ### Report Structure (Main Body vs Appendix)
 
@@ -438,7 +447,7 @@ Organize the comparison report into a **main body** and an **Appendix**, so the 
 
 1. Basic Information tables (the grouped tables above: Model Attributes, Pricing, Benchmarks, Cost & Speed, Sovereignty)
 2. Capability-by-category comparison (Reasoning / Coding / Knowledge / Agent / RAG)
-3. Overall winner table (with the Retention & Privacy Verdict row)
+3. Overall winner table (with the two Sovereignty rows: API use + local deployment, each citing developer company/country)
 
 **Appendix** (introduce with a top-level `# Appendix` heading, larger than the section headings):
 
@@ -462,21 +471,23 @@ When the comparison report is turned into an HTML slide deck (e.g., via the slid
 | Agenda | Section list | — |
 | Executive Summary | Verdict + per-model cards | — |
 | **Basic Spec & Pricing** | Attributes + pricing table (incl. cache row, blended ratio label) | Table |
-| **Sovereignty & Privacy** (immediately after Basic Spec & Pricing) | OWM, API hosting region, retention, ZDR, self-host, no-training | Table + notes |
-| **Intelligence & Cost** | AA Intelligence Index vs **Total Eval Cost** | Chart (2 bars, or scatter Index-vs-Cost) |
+| **Sovereignty & Privacy** (immediately after Basic Spec & Pricing) | Developer company & country, OWM, APIホストリージョン, retention, ZDR, self-host, no-training | Table + notes |
+| **Intelligence & Cost** | AA Intelligence Index vs **Total Eval Cost** | Grouped bar chart (2 series per model) |
 | **Reasoning** (own slide) | Left: GPQA Diamond bar (primary). Right: bubble chart | Bar + Bubble |
 | **Knowledge** (own slide) | Left: AA-Omniscience Index bar (primary). Right: bubble chart | Bar + Bubble |
 | **Coding** (own slide) | Left: AA Coding Index bar (primary). Right: bubble chart | Bar + Bubble |
 | **Agent** (own slide) | Left: AA Agentic Index bar (primary; τ-Bench fallback). Right: bubble chart | Bar + Bubble |
-| Overall Verdict | Winner-by-dimension + use-case recommendations | Table |
+| Overall Verdict | Winner-by-dimension (incl. two Sovereignty rows: API use + local deployment, with developer company/country) + use-case recommendations | Table |
 | Closing | Key stats | — |
 
 Chart & ordering rules:
 
-- **Intelligence & Cost slide:** replace any "speed"-based intelligence slide with **AA Intelligence Index vs Total Eval Cost**. Use **Total Eval Cost** (AA `intelligenceIndexCost.total`), **not** cost-per-task or speed, as the cost axis/series. If the value can only be approximated, compute it and mark it as `≈$X (approx)`; **if it cannot be obtained at all (e.g., unpriced preview), use `0` — never `null`/`undefined`/a gap** — so the cost bar/line still plots a point for that model (a zero-height bar or a point on the axis at 0), and note in the caption that the `$0` is a placeholder for "cost unavailable," not a real cost. Speed & latency (tok/s, TTFT) move to a supplementary strip or the Appendix, never as the primary intelligence comparison.
+- **Intelligence & Cost slide:** replace any "speed"-based intelligence slide with **AA Intelligence Index vs Total Eval Cost**. Use **Total Eval Cost** (AA `intelligenceIndexCost.total`), **not** cost-per-task or speed, as the cost axis/series. If the value can only be approximated, compute it and mark it as `≈$X (approx)`; **if it cannot be obtained at all (e.g., unpriced preview), use `0` — never `null`/`undefined`/a gap** — so the cost bar still plots a point for that model (a zero-height bar), and note in the caption that the `$0` is a placeholder for "cost unavailable," not a real cost. Speed & latency (tok/s, TTFT) move to a supplementary strip or the Appendix, never as the primary intelligence comparison.
+  - **Chart type: grouped bar chart with two series** (Intelligence Index on the left Y-axis, Total Eval Cost on the right Y-axis), one pair of bars per model. **Do not use a line chart** for cost — a line implies continuity/accumulation between models and is misread as a running total; the values are independent per-model figures, not a cumulative sum.
+  - **Colors:** the **Intelligence Index** series uses the **same per-model color palette as the capability slides** (one distinct color per model, consistent across the whole deck — e.g. Hy3=purple, MiMo=orange, DeepSeek=sky, MiniMax=green, Nemotron=red). The **Total Eval Cost** series is a single neutral **black/near-black** (e.g. `#0F172A`) for every model, so cost reads as one uniform series and is visually distinct from the colored score bars.
 - **Reasoning and Knowledge are separate slides**, each shown as a chart (bar / grouped bar per benchmark). Do not put reasoning and knowledge tables on the same slide. Reasoning's primary series is **GPQA Diamond** (AA `evaluations.gpqa`); HLE / AIME / MATH-500 are supplements. Knowledge's primary series is the **AA-Omniscience Index** (AA `"omniscience"`, static HTML); MMLU Pro / AGIEval / General QA are supplements.
 - **Coding and Agent are separate slides**, each shown as a chart. Do not combine coding and agent on one slide. Coding's primary series is the **AA Coding Index**; SWE-bench variants are supplements. Agent's primary series is the **AA Agentic Index**; if it cannot be obtained (not in the free API), fall back to **τ-Bench** and note the substitution, with Terminal-Bench 2.1 as a supplement.
-- **Sovereignty & Privacy** must be placed **immediately after** the Basic Spec & Pricing slide (moved up from the cost/appendix area). Include a per-model **API hosting region** row/field (from Step 2.5) alongside OWM, retention, ZDR, and no-training — and note that self-hosting an open-weight model lets the region be chosen freely.
+- **Sovereignty & Privacy** must be placed **immediately after** the Basic Spec & Pricing slide (moved up from the cost/appendix area). For each model show the **developer company and its home country** (e.g., Tencent / China) and a per-model **API hosting region** field (labeled **"APIホストリージョン"** in Japanese decks; from Step 2.5) alongside OWM, retention, ZDR, and no-training — and note that self-hosting an open-weight model lets the region be chosen freely. Keep the developer country distinct from the API hosting region (a model may be developed in one country but served from another).
 - **Each capability slide (Reasoning / Knowledge / Coding / Agent) uses a two-pane layout:** the **left pane** is a horizontal bar chart of that category's **primary index** across all models; the **right pane** is a **bubble chart** (same on every capability slide). Supplementary benchmarks (HLE/AIME/MATH, MMLU Pro/AGIEval, SWE-bench variants, Terminal-Bench/τ-Bench) move out of a second bar chart into the verdict card / footnote to make room for the bubble.
 - **Capability bubble chart spec (identical axes on all four capability slides):**
   - **X-axis** = **Time per Task** (seconds; AA `intelligenceIndexTimePerTask`, lower is better). Use the same value for all four slides since AA reports one Index-level time-per-task per model.
